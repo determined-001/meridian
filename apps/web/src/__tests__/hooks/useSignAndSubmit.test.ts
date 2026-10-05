@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { STELLAR_NETWORKS } from "@meridian/shared";
+import { APP_NETWORK, STELLAR_NETWORKS } from "@meridian/shared";
 import { useSignAndSubmit } from "../../hooks/useSignAndSubmit";
 import { useWalletStore } from "../../store/wallet";
 
 const KEY = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+
+// The network this build is not on. Used to show the passphrase tracks the
+// build rather than whatever the persisted store happens to hold (#851).
+const OTHER_NETWORK = APP_NETWORK.network === "testnet" ? "mainnet" : "testnet";
 
 vi.mock("../../lib/wallet", () => ({
   wallet: {
@@ -29,52 +33,40 @@ vi.mock("react-i18next", () => ({
 import { api } from "../../lib/api";
 import { wallet } from "../../lib/wallet";
 
-describe("useSignAndSubmit", () => {
+describe("useSignAndSubmit (#965)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(wallet.isAuthorized).mockResolvedValue(true);
     useWalletStore.setState({
       publicKey: KEY,
       connected: true,
-      network: "testnet",
+      network: APP_NETWORK.network,
     });
   });
 
   describe("passphrase selection", () => {
-    it("uses the testnet passphrase on testnet", () => {
+    it("uses the build's network passphrase", () => {
       const { result } = renderHook(() => useSignAndSubmit());
-      expect(result.current.passphrase).toBe(
-        STELLAR_NETWORKS.testnet.passphrase
-      );
+      expect(result.current.passphrase).toBe(APP_NETWORK.passphrase);
     });
 
-    it("uses the mainnet passphrase on mainnet", () => {
-      useWalletStore.setState({ network: "mainnet" });
+    it("keeps the build's passphrase when the store holds the other network", () => {
+      useWalletStore.setState({ network: OTHER_NETWORK });
       const { result } = renderHook(() => useSignAndSubmit());
-      expect(result.current.passphrase).toBe(
-        STELLAR_NETWORKS.mainnet.passphrase
-      );
+
+      expect(result.current.passphrase).toBe(APP_NETWORK.passphrase);
       expect(result.current.passphrase).not.toBe(
-        STELLAR_NETWORKS.testnet.passphrase
+        STELLAR_NETWORKS[OTHER_NETWORK].passphrase
       );
     });
 
-    it("is undefined for an unknown network", () => {
-      useWalletStore.setState({
-        network: "bogus" as unknown as "testnet",
-      });
+    it("signs with the build's passphrase, not the store's network", async () => {
+      useWalletStore.setState({ network: OTHER_NETWORK });
       const { result } = renderHook(() => useSignAndSubmit());
-      expect(result.current.passphrase).toBeUndefined();
-    });
 
-    it("signs with the passphrase of the active network", async () => {
-      useWalletStore.setState({ network: "mainnet" });
-      const { result } = renderHook(() => useSignAndSubmit());
       await result.current.signAndSubmit("XDR");
-      expect(wallet.sign).toHaveBeenCalledWith(
-        "XDR",
-        STELLAR_NETWORKS.mainnet.passphrase
-      );
+
+      expect(wallet.sign).toHaveBeenCalledWith("XDR", APP_NETWORK.passphrase);
     });
   });
 
@@ -125,7 +117,7 @@ describe("useSignAndSubmit", () => {
       expect(order).toEqual(["revalidate", "sign", "submit"]);
       expect(wallet.sign).toHaveBeenCalledWith(
         "UNSIGNED_XDR",
-        STELLAR_NETWORKS.testnet.passphrase
+        APP_NETWORK.passphrase
       );
       expect(api.submitTx).toHaveBeenCalledWith({ xdr: "SIGNED_XDR" });
       expect(useWalletStore.getState().connected).toBe(true);
