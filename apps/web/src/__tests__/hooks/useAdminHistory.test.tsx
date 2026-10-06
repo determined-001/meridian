@@ -24,6 +24,15 @@ const ACTION: AdminAction = {
   details: { from: "blend", to: "defindex" },
 };
 
+type AdminHistory = Awaited<ReturnType<typeof api.getAdminHistory>>;
+
+const RESPONSE: AdminHistory = {
+  vaultId: "vault-1",
+  contractId: "CABCDEF",
+  actions: [ACTION],
+  updatedAt: "2026-01-01T00:00:00Z",
+};
+
 function makeWrapper() {
   const client = new QueryClient({
     defaultOptions: { queries: { retryDelay: 0 } },
@@ -40,7 +49,7 @@ beforeEach(() => {
 
 describe("useAdminHistory", () => {
   it("requests history for the vault and returns the data on success", async () => {
-    getAdminHistory.mockResolvedValue([ACTION] as never);
+    getAdminHistory.mockResolvedValue(RESPONSE);
     const { wrapper } = makeWrapper();
 
     const { result } = renderHook(() => useAdminHistory("vault-1"), {
@@ -50,15 +59,15 @@ describe("useAdminHistory", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(getAdminHistory).toHaveBeenCalledOnce();
     expect(getAdminHistory).toHaveBeenCalledWith("vault-1");
-    expect(result.current.data).toEqual([ACTION]);
+    expect(result.current.data).toEqual(RESPONSE);
   });
 
   it("is loading while the request is in flight", async () => {
-    let resolve!: (v: never) => void;
+    let resolve!: (v: AdminHistory) => void;
     getAdminHistory.mockReturnValue(
-      new Promise<never>((r) => {
+      new Promise<AdminHistory>((r) => {
         resolve = r;
-      }) as never
+      })
     );
     const { wrapper } = makeWrapper();
 
@@ -69,7 +78,7 @@ describe("useAdminHistory", () => {
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeUndefined();
 
-    resolve([] as never);
+    resolve(RESPONSE);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.isLoading).toBe(false);
   });
@@ -101,9 +110,11 @@ describe("useAdminHistory", () => {
   });
 
   it("keys the cache per vault so different vaults do not share data", async () => {
-    getAdminHistory.mockImplementation((async (id: string) => [
-      { ...ACTION, id },
-    ]) as never);
+    getAdminHistory.mockImplementation(async (id: string) => ({
+      ...RESPONSE,
+      vaultId: id,
+      actions: [{ ...ACTION, id }],
+    }));
     const { client, wrapper } = makeWrapper();
 
     const first = renderHook(() => useAdminHistory("vault-1"), { wrapper });
@@ -112,8 +123,12 @@ describe("useAdminHistory", () => {
     await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
     await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
 
-    expect(first.result.current.data).toEqual([{ ...ACTION, id: "vault-1" }]);
-    expect(second.result.current.data).toEqual([{ ...ACTION, id: "vault-2" }]);
+    expect(first.result.current.data?.actions).toEqual([
+      { ...ACTION, id: "vault-1" },
+    ]);
+    expect(second.result.current.data?.actions).toEqual([
+      { ...ACTION, id: "vault-2" },
+    ]);
     expect(client.getQueryData(["adminHistory", "vault-1"])).toBeDefined();
     expect(client.getQueryData(["adminHistory", "vault-2"])).toBeDefined();
   });
